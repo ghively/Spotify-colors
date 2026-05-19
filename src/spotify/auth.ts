@@ -1,9 +1,14 @@
+import { Capacitor } from "@capacitor/core";
+import { App as CapacitorApp, type URLOpenListenerEvent } from "@capacitor/app";
+import { Browser } from "@capacitor/browser";
 import { load, remove, save } from "../lib/storage";
 
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID as string | undefined;
-const REDIRECT_URI =
+
+const NATIVE_REDIRECT_URI = "com.spotifycolors.app://callback";
+const WEB_REDIRECT_URI =
   (import.meta.env.VITE_SPOTIFY_REDIRECT_URI as string | undefined) ??
-  window.location.origin;
+  (typeof window !== "undefined" ? window.location.origin : "");
 
 const SCOPES = [
   "user-read-currently-playing",
@@ -21,6 +26,14 @@ type TokenSet = {
   refresh_token: string;
   expires_at: number; // epoch ms
 };
+
+function isNative(): boolean {
+  return Capacitor.isNativePlatform();
+}
+
+function redirectUri(): string {
+  return isNative() ? NATIVE_REDIRECT_URI : WEB_REDIRECT_URI;
+}
 
 function b64url(bytes: ArrayBuffer | Uint8Array): string {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -43,50 +56,39 @@ export function isConfigured(): boolean {
   return Boolean(CLIENT_ID);
 }
 
-export function getClientIdHint(): string | undefined {
-  return CLIENT_ID;
-}
-
 export function getRedirectUri(): string {
-  return REDIRECT_URI;
+  return redirectUri();
 }
 
-export async function beginLogin(): Promise<void> {
+export function getPlatform(): "web" | "android" | "ios" {
+  if (!isNative()) return "web";
+  return Capacitor.getPlatform() === "ios" ? "ios" : "android";
+}
+
+async function buildAuthUrl(): Promise<string> {
   if (!CLIENT_ID) throw new Error("VITE_SPOTIFY_CLIENT_ID is not set.");
   const verifier = randomVerifier();
   const challenge = b64url(await sha256(verifier));
   sessionStorage.setItem(VERIFIER_KEY, verifier);
-
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
     response_type: "code",
-    redirect_uri: REDIRECT_URI,
+    redirect_uri: redirectUri(),
     code_challenge_method: "S256",
     code_challenge: challenge,
     scope: SCOPES,
   });
-  window.location.assign(`https://accounts.spotify.com/authorize?${params}`);
+  return `https://accounts.spotify.com/authorize?${params}`;
 }
 
-export async function handleRedirectCallback(): Promise<boolean> {
-  const url = new URL(window.location.href);
-  const code = url.searchParams.get("code");
-  const error = url.searchParams.get("error");
-  if (error) {
-    sessionStorage.removeItem(VERIFIER_KEY);
-    cleanUrl();
-    throw new Error(`Spotify auth error: ${error}`);
-  }
-  if (!code) return false;
+async function exchangeCode(code: string): Promise<void> {
+  if (!CLIENT_ID) throw new Error("VITE_SPOTIFY_CLIENT_ID is not set.");
   const verifier = sessionStorage.getItem(VERIFIER_KEY);
-  if (!verifier || !CLIENT_ID) {
-    cleanUrl();
-    return false;
-  }
+  if (!verifier) throw new Error("Missing PKCE verifier.");
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: REDIRECT_URI,
+    redirect_uri: redirectUri(),
     client_id: CLIENT_ID,
     code_verifier: verifier,
   });
@@ -95,10 +97,7 @@ export async function handleRedirectCallback(): Promise<boolean> {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
-  if (!res.ok) {
-    cleanUrl();
-    throw new Error(`Token exchange failed: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Token exchange failed: ${res.status}`);
   const json = (await res.json()) as {
     access_token: string;
     refresh_token: string;
@@ -110,8 +109,69 @@ export async function handleRedirectCallback(): Promise<boolean> {
     refresh_token: json.refresh_token,
     expires_at: Date.now() + (json.expires_in - 60) * 1000,
   });
-  cleanUrl();
-  return true;
+}
+
+export async function beginLogin(): Promise<void> {
+  const url = await buildAuthUrl();
+  if (isNative()) {
+    await Browser.open({ url, presentationStyle: "popover" });
+  } else {
+    window.location.assign(url);
+  }
+}
+
+export async function handleRedirectCallback(): Promise<boolean> {
+  if (isNative()) return false;
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get("code");
+  const error = url.searchParams.get("error");
+  if (error) {
+    sessionStorage.removeItem(VERIFIER_KEY);
+    cleanUrl();
+    throw new Error(`Spotify auth error: ${error}`);
+  }
+  if (!code) return false;
+  try {
+    await exchangeCode(code);
+    return true;
+  } finally {
+    cleanUrl();
+  }
+}
+
+/**
+ * On Android, Spotify redirects to com.spotifycolors.app://callback?code=...
+ * which Android delivers to the app via App.appUrlOpen. Returns an unsubscribe fn.
+ */
+export function listenForNativeRedirect(onComplete: (ok: boolean, err?: Error) => void): () => void {
+  if (!isNative()) return () => {};
+  let removed = false;
+  const handlePromise = CapacitorApp.addListener(
+    "appUrlOpen",
+    async (event: URLOpenListenerEvent) => {
+      try {
+        const u = new URL(event.url);
+        const code = u.searchParams.get("code");
+        const error = u.searchParams.get("error");
+        if (error) {
+          await Browser.close().catch(() => undefined);
+          onComplete(false, new Error(`Spotify auth error: ${error}`));
+          return;
+        }
+        if (!code) return;
+        await exchangeCode(code);
+        await Browser.close().catch(() => undefined);
+        onComplete(true);
+      } catch (e) {
+        onComplete(false, e as Error);
+      }
+    },
+  );
+  return () => {
+    if (removed) return;
+    removed = true;
+    void handlePromise.then((h) => h.remove());
+  };
 }
 
 function cleanUrl(): void {

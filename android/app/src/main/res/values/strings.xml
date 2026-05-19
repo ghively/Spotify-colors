@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Spotify Colors</string>
+    <string name="title_activity_main">Spotify Colors</string>
+    <string name="package_name">com.spotifycolors.app</string>
+    <string name="custom_url_scheme">com.spotifycolors.app</string>
+</resources>

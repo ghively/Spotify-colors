@@ -19,3 +19,17 @@ public/apple-touch-icon-*.png
 public/favicon.ico
 
 dev-dist
+
+# Android build outputs and local config
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+android/captures/
+android/app/release/
+*.keystore
+*.jks
+keystore.properties
+
+# Capacitor source assets (regenerated via npx capacitor-assets generate)
+assets/

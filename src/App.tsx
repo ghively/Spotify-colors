@@ -6,10 +6,12 @@ import { Settings } from "./components/Settings";
 import { loadPalette, type Color } from "./lib/palette";
 import {
   beginLogin,
+  getPlatform,
   getRedirectUri,
   handleRedirectCallback,
   isConfigured,
   isLoggedIn,
+  listenForNativeRedirect,
   logout,
 } from "./spotify/auth";
 import { addTrackToColor, clearCaches } from "./spotify/api";
@@ -34,6 +36,18 @@ export default function App() {
       }
       setAuthState(isLoggedIn() ? "user" : "anon");
     })();
+
+    const unsubscribe = listenForNativeRedirect((ok, err) => {
+      if (err) {
+        setAuthError(err.message);
+        return;
+      }
+      if (ok) {
+        setAuthError(null);
+        setAuthState("user");
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
   const { track, loading, error } = useNowPlaying(authState === "user");
@@ -69,7 +83,8 @@ export default function App() {
           <h1>Setup needed</h1>
           <p className="muted">
             Set <code>VITE_SPOTIFY_CLIENT_ID</code> in your environment, then redeploy.
-            Add this redirect URI to your Spotify Developer dashboard:
+            Add this redirect URI to your Spotify Developer dashboard (platform:{" "}
+            {getPlatform()}):
           </p>
           <pre className="code">{getRedirectUri()}</pre>
         </div>
