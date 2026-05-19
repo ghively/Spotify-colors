@@ -11,7 +11,8 @@
     "android:sync": "npm run build && cap sync android",
     "android:open": "cap open android",
     "android:apk:debug": "npm run android:sync && cd android && ./gradlew assembleDebug && cd .. && echo 'APK: android/app/build/outputs/apk/debug/app-debug.apk'",
-    "android:apk:release": "npm run android:sync && cd android && ./gradlew assembleRelease && cd .. && echo 'APK: android/app/build/outputs/apk/release/app-release.apk'"
+    "android:apk:release": "npm run android:sync && cd android && ./gradlew assembleRelease && cd .. && echo 'APK: android/app/build/outputs/apk/release/app-release.apk'",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.0",
@@ -28,6 +29,7 @@
     "@types/react-dom": "^18.3.1",
     "@vite-pwa/assets-generator": "^0.2.6",
     "@vitejs/plugin-react": "^4.3.3",
+    "playwright": "^1.60.0",
     "sharp": "^0.34.5",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",

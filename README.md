@@ -9,6 +9,20 @@ Ships as both:
 - a **PWA** (installable from any modern browser), and
 - a **native Android APK** (Capacitor wrapper around the same React app, signed and sideloadable).
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/01-login.png" alt="Sign-in screen" width="220" />
+  <img src="docs/screenshots/02-now-playing.png" alt="Now playing with color palette" width="220" />
+  <img src="docs/screenshots/05-toast.png" alt="Song added to a color" width="220" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/04-settings.png" alt="Palette settings" width="220" />
+</p>
+
+<sub>Screenshots are rendered via Playwright against the live dev server with the Spotify API mocked — regenerate with <code>npm run screenshots</code> after UI changes.</sub>
+
 ## Features
 
 - Sign in once with Spotify (OAuth PKCE — no server needed)
