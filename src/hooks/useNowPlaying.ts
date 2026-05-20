@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentlyPlaying, type Track } from "../spotify/api";
 
 type State = {
@@ -10,46 +10,59 @@ type State = {
 export function useNowPlaying(enabled: boolean, intervalMs = 5000) {
   const [state, setState] = useState<State>({ track: null, loading: false, error: null });
   const inFlight = useRef(false);
+  const cancelled = useRef(false);
+
+  const fetchNow = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      const track = await getCurrentlyPlaying();
+      if (cancelled.current) return;
+      setState((s) => {
+        // preserve identity if track + progress haven't meaningfully changed
+        if (
+          s.track &&
+          track &&
+          s.track.id === track.id &&
+          Math.abs(s.track.progressMs - track.progressMs) < 1500 &&
+          s.track.isPlaying === track.isPlaying
+        ) {
+          return { ...s, loading: false, error: null };
+        }
+        return { track, loading: false, error: null };
+      });
+    } catch (e) {
+      if (cancelled.current) return;
+      setState({ track: null, loading: false, error: (e as Error).message });
+    } finally {
+      inFlight.current = false;
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    setState((s) => ({ ...s, loading: true }));
+    await fetchNow();
+  }, [fetchNow]);
 
   useEffect(() => {
+    cancelled.current = false;
     if (!enabled) return;
-    let cancelled = false;
-
-    const tick = async () => {
-      if (inFlight.current) return;
-      if (document.hidden) return;
-      inFlight.current = true;
-      try {
-        const track = await getCurrentlyPlaying();
-        if (cancelled) return;
-        setState((s) => ({
-          track,
-          loading: false,
-          error: null,
-          // preserve identity if unchanged to avoid re-renders
-          ...(s.track && track && s.track.id === track.id ? { track: s.track } : {}),
-        }));
-      } catch (e) {
-        if (cancelled) return;
-        setState({ track: null, loading: false, error: (e as Error).message });
-      } finally {
-        inFlight.current = false;
-      }
-    };
-
     setState((s) => ({ ...s, loading: true }));
-    void tick();
-    const id = window.setInterval(tick, intervalMs);
+    void fetchNow();
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      void fetchNow();
+    }, intervalMs);
     const onVisible = () => {
-      if (!document.hidden) void tick();
+      if (!document.hidden) void fetchNow();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      cancelled = true;
+      cancelled.current = true;
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [enabled, intervalMs]);
+  }, [enabled, intervalMs, fetchNow]);
 
-  return state;
+  return { ...state, refresh };
 }

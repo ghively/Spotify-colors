@@ -13,12 +13,14 @@ Ships as both:
 
 <p align="center">
   <img src="docs/screenshots/01-login.png" alt="Sign-in screen" width="220" />
-  <img src="docs/screenshots/02-now-playing.png" alt="Now playing with color palette" width="220" />
-  <img src="docs/screenshots/05-toast.png" alt="Song added to a color" width="220" />
+  <img src="docs/screenshots/02-now-playing.png" alt="Now playing with classified indicator, last-classified ticker, and live progress bar" width="220" />
+  <img src="docs/screenshots/04-undo-toast.png" alt="Toast with Undo button after classifying a song" width="220" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/04-settings.png" alt="Palette settings" width="220" />
+  <img src="docs/screenshots/03-settings.png" alt="Configurable color palette" width="220" />
+  <img src="docs/screenshots/05-update-banner.png" alt="In-app update available banner" width="220" />
+  <img src="docs/screenshots/06-confirm-logout.png" alt="Sign-out confirmation dialog" width="220" />
 </p>
 
 <sub>Screenshots are rendered via Playwright against the live dev server with the Spotify API mocked — regenerate with <code>npm run screenshots</code> after UI changes.</sub>
@@ -26,9 +28,14 @@ Ships as both:
 ## Features
 
 - Sign in once with Spotify (OAuth PKCE — no server needed)
-- "Now playing" card auto-refreshes every 5s
+- "Now playing" card with live progress bar, auto-refreshes every 5s; tap to open in Spotify
 - Configurable palette (rename, recolor, add, remove colors)
+- Already-classified swatches show a checkmark so you never have to wonder if a song's been sorted
+- "Last: Blue · 2 min ago" status line confirms the previous tap landed
+- One-tap **Undo** in the post-classification toast removes the song from the playlist
+- Native haptic feedback on Android color taps
 - Duplicate-aware: won't add the same song twice to the same color
+- In-app update check (compares against a `version.json` on your PWA host) with a direct download link
 - Offline shell + cached album art via service worker
 - Same React codebase for web and Android
 

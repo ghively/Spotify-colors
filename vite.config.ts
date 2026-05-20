@@ -1,8 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { readFileSync } from "node:fs";
 
-export default defineConfig({
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+
+export default defineConfig(() => ({
+  define: {
+    "import.meta.env.VITE_APP_VERSION": JSON.stringify(pkg.version),
+  },
   plugins: [
     react(),
     VitePWA({
@@ -61,4 +67,4 @@ export default defineConfig({
     port: 5173,
     host: true,
   },
-});
+}));

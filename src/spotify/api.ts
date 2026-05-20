@@ -10,6 +10,10 @@ export type Track = {
   artists: string;
   album: string;
   albumImage: string | null;
+  durationMs: number;
+  progressMs: number;
+  isPlaying: boolean;
+  fetchedAt: number;
 };
 
 type PlaylistCache = Record<string, string>; // colorName -> playlistId
@@ -58,10 +62,12 @@ export async function getMe(): Promise<CachedUser> {
 export async function getCurrentlyPlaying(): Promise<Track | null> {
   type Resp = {
     is_playing: boolean;
+    progress_ms: number | null;
     item: {
       id: string;
       uri: string;
       name: string;
+      duration_ms: number;
       artists: { name: string }[];
       album: { name: string; images: { url: string }[] };
     } | null;
@@ -75,6 +81,10 @@ export async function getCurrentlyPlaying(): Promise<Track | null> {
     artists: data.item.artists.map((a) => a.name).join(", "),
     album: data.item.album.name,
     albumImage: data.item.album.images[0]?.url ?? null,
+    durationMs: data.item.duration_ms,
+    progressMs: data.progress_ms ?? 0,
+    isPlaying: data.is_playing,
+    fetchedAt: Date.now(),
   };
 }
 
@@ -149,6 +159,16 @@ export async function addTrackToColor(
     body: JSON.stringify({ uris: [track.uri] }),
   });
   return { result: "added", playlistId };
+}
+
+export async function removeTrackFromPlaylist(
+  playlistId: string,
+  trackUri: string,
+): Promise<void> {
+  await api(`/playlists/${playlistId}/tracks`, {
+    method: "DELETE",
+    body: JSON.stringify({ tracks: [{ uri: trackUri }] }),
+  });
 }
 
 export function clearCaches(): void {

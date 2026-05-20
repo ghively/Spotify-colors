@@ -11,6 +11,8 @@ const PORT = 5180;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
 const MOCK_ALBUM_ART = makeAlbumArt();
+const DURATION_MS = 213_000; // 3:33
+const PROGRESS_MS = 91_500; // ~43%
 
 async function main() {
   await mkdir(outDir, { recursive: true });
@@ -22,6 +24,8 @@ async function main() {
       ...process.env,
       VITE_SPOTIFY_CLIENT_ID: "mock_client_id",
       VITE_SPOTIFY_REDIRECT_URI: ORIGIN,
+      VITE_UPDATE_CHECK_URL: `${ORIGIN}/__mock_version__.json`,
+      VITE_UPDATE_DOWNLOAD_URL: "https://example.com/releases",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -34,37 +38,12 @@ async function main() {
     colorScheme: "dark",
   });
 
-  // Mock Spotify Web API
-  await context.route("**://api.spotify.com/**", async (route) => {
-    const url = new URL(route.request().url());
-    const path = url.pathname;
-    if (path === "/v1/me") {
-      return route.fulfill({ json: { id: "demo_user", display_name: "Demo" } });
-    }
-    if (path === "/v1/me/player/currently-playing") {
-      return route.fulfill({
-        json: {
-          is_playing: true,
-          item: {
-            id: "demo_track_1",
-            uri: "spotify:track:demo_track_1",
-            name: "Aurora Tide",
-            artists: [{ name: "Lumen Bay" }, { name: "Solenne" }],
-            album: {
-              name: "Northern Mirrors",
-              images: [{ url: MOCK_ALBUM_ART }],
-            },
-          },
-        },
-      });
-    }
-    if (path === "/v1/me/playlists") {
-      return route.fulfill({ json: { items: [], next: null } });
-    }
-    return route.fulfill({ json: {} });
-  });
+  await context.route("**/__mock_version__.json", (route) =>
+    route.fulfill({ json: { version: "0.2.0", builtAt: new Date().toISOString() } }),
+  );
+  await context.route("**://api.spotify.com/**", (route) => mockSpotify(route));
 
-  // 1) Login screen — no tokens, default state
+  // 1) Login screen
   {
     const page = await context.newPage();
     await page.goto(ORIGIN, { waitUntil: "networkidle" });
@@ -74,7 +53,7 @@ async function main() {
     console.log("✓ 01-login.png");
   }
 
-  // 2) + 3) + 4) Authenticated state — seed tokens
+  // Authenticated state — seed tokens, pre-classify Blue, set a "last"
   await context.addInitScript(() => {
     localStorage.setItem(
       "sc.tokens.v1",
@@ -84,82 +63,131 @@ async function main() {
         expires_at: Date.now() + 60 * 60 * 1000,
       }),
     );
+    localStorage.setItem(
+      "sc.classified.v1",
+      JSON.stringify({ demo_track_1: ["blue"] }),
+    );
+    localStorage.setItem(
+      "sc.last.v1",
+      JSON.stringify({
+        colorId: "blue",
+        colorName: "Blue",
+        colorHex: "#1e88e5",
+        trackId: "demo_track_1",
+        trackName: "Aurora Tide",
+        at: Date.now() - 90_000,
+      }),
+    );
   });
 
+  // 2) Main screen: progress bar, last-classified line, Blue swatch checked
   {
     const page = await context.newPage();
     await page.goto(ORIGIN, { waitUntil: "networkidle" });
     await page.waitForSelector("text=Aurora Tide");
-    await page.waitForTimeout(300);
+    await page.waitForSelector(".np-progress-fill");
+    await dismissUpdateBanner(page);
+    await page.waitForTimeout(400);
     await page.screenshot({ path: `${outDir}/02-now-playing.png` });
     console.log("✓ 02-now-playing.png");
 
-    // Hover/focus a color to show the press feedback
-    const swatch = page.locator(".swatch", { hasText: "Blue" });
-    await swatch.hover();
-    await page.waitForTimeout(100);
-    await page.screenshot({ path: `${outDir}/03-palette.png` });
-    console.log("✓ 03-palette.png");
-
-    // Open settings
+    // 3) Settings sheet
     await page.click('[aria-label="Open settings"]');
     await page.waitForSelector("text=Palette");
     await page.waitForTimeout(200);
-    await page.screenshot({ path: `${outDir}/04-settings.png` });
-    console.log("✓ 04-settings.png");
+    await page.screenshot({ path: `${outDir}/03-settings.png` });
+    console.log("✓ 03-settings.png");
     await page.close();
   }
 
-  // 5) Toast after successful classification
+  // 4) Toast with Undo action after classifying Red (not yet classified)
   {
     const page = await context.newPage();
-    // intercept playlist tracks endpoint to make add succeed instantly
-    await page.route("**://api.spotify.com/**", async (route) => {
-      const u = new URL(route.request().url());
-      const p = u.pathname;
-      if (p === "/v1/me") return route.fulfill({ json: { id: "demo_user", display_name: "Demo" } });
-      if (p === "/v1/me/player/currently-playing") {
-        return route.fulfill({
-          json: {
-            is_playing: true,
-            item: {
-              id: "demo_track_1",
-              uri: "spotify:track:demo_track_1",
-              name: "Aurora Tide",
-              artists: [{ name: "Lumen Bay" }, { name: "Solenne" }],
-              album: { name: "Northern Mirrors", images: [{ url: MOCK_ALBUM_ART }] },
-            },
-          },
-        });
-      }
-      if (p === "/v1/me/playlists") {
-        return route.fulfill({ json: { items: [], next: null } });
-      }
-      if (p.startsWith("/v1/users/") && p.endsWith("/playlists")) {
-        return route.fulfill({ json: { id: "new_playlist_id" } });
-      }
-      if (p.startsWith("/v1/playlists/") && p.endsWith("/tracks")) {
-        if (route.request().method() === "GET") {
-          return route.fulfill({ json: { items: [], next: null } });
-        }
-        return route.fulfill({ json: { snapshot_id: "snap" } });
-      }
-      return route.fulfill({ json: {} });
-    });
-
     await page.goto(ORIGIN, { waitUntil: "networkidle" });
     await page.waitForSelector("text=Aurora Tide");
-    await page.locator(".swatch", { hasText: "Blue" }).click();
-    await page.waitForSelector("text=Added to Blue");
+    await dismissUpdateBanner(page);
+    await page.locator(".swatch", { hasText: "Red" }).click();
+    await page.waitForSelector("text=Added to Red");
     await page.waitForTimeout(350);
-    await page.screenshot({ path: `${outDir}/05-toast.png` });
-    console.log("✓ 05-toast.png");
+    await page.screenshot({ path: `${outDir}/04-undo-toast.png` });
+    console.log("✓ 04-undo-toast.png");
+    await page.close();
+  }
+
+  // 5) Update banner
+  {
+    const page = await context.newPage();
+    await page.goto(ORIGIN, { waitUntil: "networkidle" });
+    await page.waitForSelector("text=Update available");
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${outDir}/05-update-banner.png` });
+    console.log("✓ 05-update-banner.png");
+    await page.close();
+  }
+
+  // 6) Logout confirm dialog
+  {
+    const page = await context.newPage();
+    await page.goto(ORIGIN, { waitUntil: "networkidle" });
+    await page.waitForSelector("text=Aurora Tide");
+    await dismissUpdateBanner(page);
+    await page.click('[aria-label="Open settings"]');
+    await page.waitForSelector("text=Sign out of Spotify");
+    await page.click("text=Sign out of Spotify");
+    await page.waitForSelector("text=Sign out of Spotify?");
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${outDir}/06-confirm-logout.png` });
+    console.log("✓ 06-confirm-logout.png");
     await page.close();
   }
 
   await browser.close();
   dev.kill("SIGTERM");
   console.log(`\nScreenshots in ${outDir}`);
+}
+
+async function dismissUpdateBanner(page) {
+  const banner = page.locator(".update-banner");
+  if (await banner.count()) {
+    await banner.locator('[aria-label="Dismiss"]').click().catch(() => undefined);
+  }
+}
+
+async function mockSpotify(route) {
+  const u = new URL(route.request().url());
+  const p = u.pathname;
+  const method = route.request().method();
+
+  if (p === "/v1/me") {
+    return route.fulfill({ json: { id: "demo_user", display_name: "Demo" } });
+  }
+  if (p === "/v1/me/player/currently-playing") {
+    return route.fulfill({
+      json: {
+        is_playing: true,
+        progress_ms: PROGRESS_MS,
+        item: {
+          id: "demo_track_1",
+          uri: "spotify:track:demo_track_1",
+          name: "Aurora Tide",
+          duration_ms: DURATION_MS,
+          artists: [{ name: "Lumen Bay" }, { name: "Solenne" }],
+          album: { name: "Northern Mirrors", images: [{ url: MOCK_ALBUM_ART }] },
+        },
+      },
+    });
+  }
+  if (p === "/v1/me/playlists") {
+    return route.fulfill({ json: { items: [], next: null } });
+  }
+  if (p.startsWith("/v1/users/") && p.endsWith("/playlists")) {
+    return route.fulfill({ json: { id: "new_playlist_id" } });
+  }
+  if (p.startsWith("/v1/playlists/") && p.endsWith("/tracks")) {
+    if (method === "GET") return route.fulfill({ json: { items: [], next: null } });
+    return route.fulfill({ json: { snapshot_id: "snap" } });
+  }
+  return route.fulfill({ json: {} });
 }
 
 async function waitForServer(url, timeoutMs = 30_000) {

@@ -6,6 +6,7 @@ import {
   type Color,
 } from "../lib/palette";
 import { clearCaches } from "../spotify/api";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 type Props = {
   palette: Color[];
@@ -14,8 +15,15 @@ type Props = {
   onLogout: () => void;
 };
 
+type Pending =
+  | { kind: "logout" }
+  | { kind: "reset" }
+  | { kind: "clearCache" }
+  | null;
+
 export function Settings({ palette, onChange, onClose, onLogout }: Props) {
   const [local, setLocal] = useState<Color[]>(palette);
+  const [pending, setPending] = useState<Pending>(null);
 
   const update = (next: Color[]) => {
     setLocal(next);
@@ -34,11 +42,6 @@ export function Settings({ palette, onChange, onClose, onLogout }: Props) {
 
   const add = () => {
     update([...local, { id: newColorId(), name: "New color", hex: "#888888" }]);
-  };
-
-  const resetDefaults = () => {
-    if (!confirm("Reset palette to the default colors?")) return;
-    update(DEFAULT_PALETTE);
   };
 
   return (
@@ -89,7 +92,7 @@ export function Settings({ palette, onChange, onClose, onLogout }: Props) {
           <button className="btn" onClick={add}>
             + Add color
           </button>
-          <button className="btn ghost" onClick={resetDefaults}>
+          <button className="btn ghost" onClick={() => setPending({ kind: "reset" })}>
             Reset to defaults
           </button>
         </div>
@@ -97,20 +100,46 @@ export function Settings({ palette, onChange, onClose, onLogout }: Props) {
         <hr className="sep" />
 
         <div className="row">
-          <button
-            className="btn ghost"
-            onClick={() => {
-              clearCaches();
-              alert("Cached playlist links cleared. Existing classifications are kept.");
-            }}
-          >
+          <button className="btn ghost" onClick={() => setPending({ kind: "clearCache" })}>
             Clear playlist cache
           </button>
-          <button className="btn danger" onClick={onLogout}>
+          <button className="btn danger" onClick={() => setPending({ kind: "logout" })}>
             Sign out of Spotify
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={pending?.kind === "reset"}
+        title="Reset palette?"
+        message="Your custom colors will be replaced with the default set."
+        confirmLabel="Reset"
+        onConfirm={() => {
+          update(DEFAULT_PALETTE);
+          setPending(null);
+        }}
+        onCancel={() => setPending(null)}
+      />
+      <ConfirmDialog
+        open={pending?.kind === "clearCache"}
+        title="Clear playlist cache?"
+        message="The next classification will re-discover playlists by name. Existing songs stay put."
+        confirmLabel="Clear"
+        onConfirm={() => {
+          clearCaches();
+          setPending(null);
+        }}
+        onCancel={() => setPending(null)}
+      />
+      <ConfirmDialog
+        open={pending?.kind === "logout"}
+        title="Sign out of Spotify?"
+        message="You'll need to sign in again to keep classifying songs."
+        confirmLabel="Sign out"
+        danger
+        onConfirm={onLogout}
+        onCancel={() => setPending(null)}
+      />
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { NowPlaying } from "./components/NowPlaying";
 import { ColorPalette } from "./components/ColorPalette";
-import { Toast, type ToastKind } from "./components/Toast";
+import { Toast, type ToastAction, type ToastKind } from "./components/Toast";
 import { Settings } from "./components/Settings";
+import { LastClassified } from "./components/LastClassified";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { loadPalette, type Color } from "./lib/palette";
 import {
   beginLogin,
@@ -14,10 +16,32 @@ import {
   listenForNativeRedirect,
   logout,
 } from "./spotify/auth";
-import { addTrackToColor, clearCaches } from "./spotify/api";
+import {
+  addTrackToColor,
+  clearCaches,
+  removeTrackFromPlaylist,
+  type Track,
+} from "./spotify/api";
 import { useNowPlaying } from "./hooks/useNowPlaying";
+import {
+  classifiedColorsFor,
+  loadLast,
+  recordClassification,
+  removeClassification,
+  saveLast,
+  type LastClassification,
+} from "./lib/classifications";
+import { success as hapticSuccess } from "./lib/haptics";
+import { checkForUpdate, getAppVersion, type UpdateInfo } from "./lib/updateCheck";
 
 type AuthState = "checking" | "anon" | "user";
+
+type ToastState = {
+  msg: string;
+  kind: ToastKind;
+  action?: ToastAction | null;
+  durationMs?: number;
+} | null;
 
 export default function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
@@ -25,7 +49,9 @@ export default function App() {
   const [palette, setPalette] = useState<Color[]>(() => loadPalette());
   const [showSettings, setShowSettings] = useState(false);
   const [pendingColorId, setPendingColorId] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null);
+  const [toast, setToast] = useState<ToastState>(null);
+  const [last, setLast] = useState<LastClassification | null>(() => loadLast());
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -47,10 +73,15 @@ export default function App() {
         setAuthState("user");
       }
     });
+
+    void checkForUpdate().then(setUpdateInfo);
+
     return () => unsubscribe();
   }, []);
 
-  const { track, loading, error } = useNowPlaying(authState === "user");
+  const { track, loading, error, refresh } = useNowPlaying(authState === "user");
+
+  const classifiedIds = track ? classifiedColorsFor(track.id) : [];
 
   const onPick = useCallback(
     async (color: Color) => {
@@ -61,11 +92,28 @@ export default function App() {
       if (pendingColorId) return;
       setPendingColorId(color.id);
       try {
-        const { result } = await addTrackToColor(color.name, track);
+        const { result, playlistId } = await addTrackToColor(color.name, track);
+        recordClassification(track.id, color.id);
+        const lastEntry: LastClassification = {
+          colorId: color.id,
+          colorName: color.name,
+          colorHex: color.hex,
+          trackId: track.id,
+          trackName: track.name,
+          at: Date.now(),
+        };
+        saveLast(lastEntry);
+        setLast(lastEntry);
+        void hapticSuccess();
+        const undoAction = buildUndo(track, color, playlistId, setToast, setLast);
         if (result === "added") {
-          setToast({ msg: `Added to ${color.name}`, kind: "success" });
+          setToast({ msg: `Added to ${color.name}`, kind: "success", action: undoAction });
         } else {
-          setToast({ msg: `Already in ${color.name}`, kind: "info" });
+          setToast({
+            msg: `Already in ${color.name}`,
+            kind: "info",
+            action: undoAction,
+          });
         }
       } catch (e) {
         setToast({ msg: (e as Error).message, kind: "error" });
@@ -108,6 +156,7 @@ export default function App() {
           <button className="btn primary big" onClick={() => void beginLogin()}>
             Sign in with Spotify
           </button>
+          <div className="muted small" style={{ marginTop: 16 }}>v{getAppVersion()}</div>
         </div>
       </main>
     );
@@ -115,6 +164,7 @@ export default function App() {
 
   return (
     <main className="screen">
+      <UpdateBanner info={updateInfo} />
       <header className="topbar">
         <h1 className="brand">Colors</h1>
         <button
@@ -126,12 +176,14 @@ export default function App() {
         </button>
       </header>
 
-      <NowPlaying track={track} loading={loading} error={error} />
+      <NowPlaying track={track} loading={loading} error={error} onRefresh={() => void refresh()} />
+      <LastClassified last={last} />
 
       <ColorPalette
         palette={palette}
         disabled={!track}
         pending={pendingColorId}
+        classifiedColorIds={classifiedIds}
         onPick={onPick}
       />
 
@@ -152,8 +204,37 @@ export default function App() {
       <Toast
         message={toast?.msg ?? null}
         kind={toast?.kind}
+        action={toast?.action ?? null}
+        durationMs={toast?.durationMs ?? 3500}
         onDismiss={() => setToast(null)}
       />
     </main>
   );
+}
+
+function buildUndo(
+  track: Track,
+  color: Color,
+  playlistId: string,
+  setToast: (t: ToastState) => void,
+  setLast: (l: LastClassification | null) => void,
+): ToastAction {
+  return {
+    label: "Undo",
+    onClick: async () => {
+      setToast({ msg: `Undoing…`, kind: "info" });
+      try {
+        await removeTrackFromPlaylist(playlistId, track.uri);
+        removeClassification(track.id, color.id);
+        const current = loadLast();
+        if (current && current.trackId === track.id && current.colorId === color.id) {
+          saveLast(null);
+          setLast(null);
+        }
+        setToast({ msg: `Removed from ${color.name}`, kind: "info" });
+      } catch (e) {
+        setToast({ msg: (e as Error).message, kind: "error" });
+      }
+    },
+  };
 }
