@@ -127,6 +127,71 @@ npx capacitor-assets generate --android
 npm run android:sync
 ```
 
+## Release pipeline (signed APK via GitHub Actions)
+
+The workflow at `.github/workflows/release.yml` builds and signs a release APK
+on every `v*.*.*` git tag (or via the "Run workflow" button), then attaches it
+to a GitHub Release. Combined with the in-app update banner, that's the full
+loop for keeping her phone up to date — she sees the banner, taps "Get it",
+downloads from the Release page, installs.
+
+### One-time setup
+
+1. **Generate a release keystore** locally (only once, ever):
+   ```sh
+   keytool -genkey -keystore release.keystore -alias spotifycolors \
+     -keyalg RSA -keysize 2048 -validity 10000
+   ```
+   Store the file and both passwords in a password manager. **If you lose
+   them, no future update will install over the current app** — she'd have
+   to uninstall first, losing tokens, palette, and classifications.
+
+2. **Base64-encode the keystore** so it can live in a GitHub Secret:
+   ```sh
+   base64 -w0 release.keystore > release.keystore.b64
+   ```
+
+3. **Add Repository Secrets** under Settings → Secrets and variables →
+   Actions → New repository secret:
+
+   | Secret | Value |
+   | --- | --- |
+   | `RELEASE_KEYSTORE_BASE64` | Paste the entire contents of `release.keystore.b64` |
+   | `KEYSTORE_PASSWORD` | Store password you set with `keytool` |
+   | `KEY_PASSWORD` | Key password (often the same as the store password) |
+   | `KEY_ALIAS` | Optional — defaults to `spotifycolors` |
+   | `VITE_SPOTIFY_CLIENT_ID` | Same value as your local `.env` |
+   | `VITE_SPOTIFY_REDIRECT_URI` | Production PWA URL |
+   | `VITE_UPDATE_CHECK_URL` | URL where `version.json` is hosted |
+   | `VITE_UPDATE_DOWNLOAD_URL` | Usually `https://github.com/<you>/<repo>/releases/latest` |
+
+   Delete the local `release.keystore.b64` after pasting it — keep only the
+   raw `.keystore` and the passwords.
+
+### Each release
+
+1. Bump `version` in `package.json` (e.g. `0.1.0` → `0.2.0`)
+2. Commit, push to main → Cloudflare Pages auto-deploys the PWA and the
+   updated `version.json`
+3. Tag and push:
+   ```sh
+   git tag v0.2.0
+   git push --tags
+   ```
+4. Workflow runs (~5 min): decodes the keystore, builds the web bundle and
+   the signed APK with `versionName=0.2.0` and a monotonically increasing
+   `versionCode`, verifies the signature, creates the GitHub Release with
+   auto-generated notes, attaches `spotify-colors-0.2.0.apk`.
+5. Her phone opens the app → fetches `version.json` → sees the new version →
+   banner appears → she taps "Get it" → downloads the APK from the Release
+   page → installs.
+
+### Trust note
+
+Anyone with write access to the repo (or to the secrets above) can produce
+APKs that Android will accept as updates to the installed app. Keep the
+collaborator list small.
+
 ## Architecture
 
 - `src/spotify/auth.ts` — PKCE flow, token storage, refresh. Detects native platform and uses `com.spotifycolors.app://callback` + `@capacitor/app` deep-link listener instead of `window.location` redirect.

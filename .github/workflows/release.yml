@@ -1,0 +1,163 @@
+name: Release Android APK
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.2.0). Must match package.json."
+        required: true
+        type: string
+
+jobs:
+  release:
+    name: Build and publish signed APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to create the GitHub Release
+    steps:
+      - name: Verify required secrets
+        env:
+          KS: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          SP: ${{ secrets.KEYSTORE_PASSWORD }}
+          KP: ${{ secrets.KEY_PASSWORD }}
+          CID: ${{ secrets.VITE_SPOTIFY_CLIENT_ID }}
+        run: |
+          missing=()
+          [ -z "$KS"  ] && missing+=("RELEASE_KEYSTORE_BASE64")
+          [ -z "$SP"  ] && missing+=("KEYSTORE_PASSWORD")
+          [ -z "$KP"  ] && missing+=("KEY_PASSWORD")
+          [ -z "$CID" ] && missing+=("VITE_SPOTIFY_CLIENT_ID")
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing required secrets: ${missing[*]}. See README → Release pipeline."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match release version ($VERSION). Bump package.json and re-tag."
+            exit 1
+          fi
+          IFS='.' read -r MAJ MIN PAT <<< "$VERSION"
+          # versionCode must be monotonic; major*10000 + minor*100 + patch
+          # supports up to 99 patch / 99 minor / unlimited major
+          VERSION_CODE=$((10#$MAJ * 10000 + 10#$MIN * 100 + 10#$PAT))
+          echo "version=$VERSION"            >> $GITHUB_OUTPUT
+          echo "versionCode=$VERSION_CODE"   >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION"               >> $GITHUB_OUTPUT
+          echo "Resolved: $VERSION (code $VERSION_CODE)"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK platforms
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build web bundle
+        env:
+          VITE_SPOTIFY_CLIENT_ID: ${{ secrets.VITE_SPOTIFY_CLIENT_ID }}
+          VITE_SPOTIFY_REDIRECT_URI: ${{ secrets.VITE_SPOTIFY_REDIRECT_URI }}
+          VITE_UPDATE_CHECK_URL: ${{ secrets.VITE_UPDATE_CHECK_URL }}
+          VITE_UPDATE_DOWNLOAD_URL: ${{ secrets.VITE_UPDATE_DOWNLOAD_URL }}
+        run: npm run build
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > android/release.keystore
+          KEY_ALIAS="${KEY_ALIAS:-spotifycolors}"
+          cat > android/keystore.properties <<EOF
+          storeFile=../release.keystore
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=$KEY_ALIAS
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          EOF
+
+      - name: Build signed APK
+        working-directory: android
+        run: |
+          ./gradlew assembleRelease \
+            -PversionName=${{ steps.ver.outputs.version }} \
+            -PversionCode=${{ steps.ver.outputs.versionCode }}
+
+      - name: Verify APK is signed
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK was not produced at $APK"
+            exit 1
+          fi
+          if ! /opt/android-sdk-linux/build-tools/36.0.0/apksigner verify "$APK" 2>/dev/null \
+             && ! $ANDROID_HOME/build-tools/36.0.0/apksigner verify "$APK"; then
+            echo "::error::APK signature verification failed"
+            exit 1
+          fi
+
+      - name: Stage release artifact
+        id: stage
+        run: |
+          mkdir -p artifacts
+          OUT="artifacts/spotify-colors-${{ steps.ver.outputs.version }}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$OUT"
+          echo "apk=$OUT" >> $GITHUB_OUTPUT
+          ls -lh "$OUT"
+
+      - name: Wipe signing material
+        if: always()
+        run: |
+          rm -f android/release.keystore android/keystore.properties
+          # belt and suspenders — also clear any decoded copies
+          find . -name "release.keystore" -type f -delete 2>/dev/null || true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${{ steps.stage.outputs.apk }}" --clobber
+          else
+            gh release create "$TAG" "${{ steps.stage.outputs.apk }}" \
+              --title "$TAG" \
+              --generate-notes
+          fi
