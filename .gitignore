@@ -12,6 +12,9 @@ dist-ssr
 .idea
 *.log
 
+# Local editor/agent state
+.claude/
+
 # PWA generated assets (regenerate with `npm run generate-pwa-assets`)
 public/pwa-*.png
 public/maskable-*.png
