@@ -106,17 +106,17 @@ The debug APK is auto-signed with Android's debug keystore. It installs fine via
    # Output: android/app/build/outputs/apk/release/app-release.apk
    ```
 
-### Installing on her phone
-- Email / AirDrop / Google Drive the APK to her phone
+### Installing on the device
+- Email / AirDrop / Google Drive the APK to the device
 - Tap the APK file → Android prompts "Allow this source to install apps" → done
-- App icon "Spotify Colors" appears in her launcher
+- App icon "Spotify Colors" appears in the device's launcher
 
 ### Updating the app
 After any code change:
 ```sh
 npm run android:apk:debug   # or :release
 ```
-She reinstalls the new APK over the old one (same signing key required for release builds).
+Reinstall the new APK over the old one (same signing key required for release builds).
 
 ### Customizing the icon
 
@@ -132,8 +132,8 @@ npm run android:sync
 The workflow at `.github/workflows/release.yml` builds and signs a release APK
 on every `v*.*.*` git tag (or via the "Run workflow" button), then attaches it
 to a GitHub Release. Combined with the in-app update banner, that's the full
-loop for keeping her phone up to date — she sees the banner, taps "Get it",
-downloads from the Release page, installs.
+loop for keeping the installed app up to date — the device sees the banner,
+the user taps "Get it", downloads from the Release page, installs.
 
 ### One-time setup
 
@@ -143,8 +143,8 @@ downloads from the Release page, installs.
      -keyalg RSA -keysize 2048 -validity 10000
    ```
    Store the file and both passwords in a password manager. **If you lose
-   them, no future update will install over the current app** — she'd have
-   to uninstall first, losing tokens, palette, and classifications.
+   them, no future update will install over the current app** — the user
+   would have to uninstall first, losing tokens, palette, and classifications.
 
 2. **Base64-encode the keystore** so it can live in a GitHub Secret:
    ```sh
@@ -182,8 +182,8 @@ downloads from the Release page, installs.
    the signed APK with `versionName=0.2.0` and a monotonically increasing
    `versionCode`, verifies the signature, creates the GitHub Release with
    auto-generated notes, attaches `spotify-colors-0.2.0.apk`.
-5. Her phone opens the app → fetches `version.json` → sees the new version →
-   banner appears → she taps "Get it" → downloads the APK from the Release
+5. The device opens the app → fetches `version.json` → sees the new version →
+   banner appears → the user taps "Get it" → downloads the APK from the Release
    page → installs.
 
 ### Trust note
