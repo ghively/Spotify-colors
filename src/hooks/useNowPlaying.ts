@@ -15,6 +15,7 @@ export function useNowPlaying(enabled: boolean, intervalMs = 5000) {
   const fetchNow = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
+    setState((s) => ({ ...s, loading: true }));
     try {
       const track = await getCurrentlyPlaying();
       if (cancelled.current) return;
@@ -47,7 +48,7 @@ export function useNowPlaying(enabled: boolean, intervalMs = 5000) {
   useEffect(() => {
     cancelled.current = false;
     if (!enabled) return;
-    setState((s) => ({ ...s, loading: true }));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetchNow's setState runs after an await, not synchronously during render
     void fetchNow();
     const id = window.setInterval(() => {
       if (document.hidden) return;
